@@ -20,20 +20,69 @@
 <!--toc:start-->
 - [Tropical Project Manager](#tropical-project-manager)
   - [Overview](#overview)
-  - [Key Features](#key-features)
+  - [Using as a CLI Tool](#using-as-a-cli-tool)
   - [Installation](#installation)
-  - [Usage](#usage)
-  - [Project Creation Guidelines](#project-creation-guidelines)
+  - [Key Features](#key-features)
   - [Technical Architecture](#technical-architecture)
+  - [Core Lifecycle](#core-lifecycle)
+  - [Command Reference](#command-reference)
 <!--toc:end-->
 
 ## Overview
 
 **Tropical Project Manager** is a terminal user interface (TUI) designed to act as your central command center for local software projects. 
 
-Built with speed and aesthetics in mind using Rust, Ratatui, and Crossterm, it asynchronously scans your master directory for Git repositories and gives you a deep, real-time breakdown of your workspace.
+For command-line users, this project provides a powerful CLI interface.
 
 At its heart lies a powerful background thread engine powered by `std::sync::mpsc`, which scans directories, parses `.git` folders using `git2`, and even reaches out to the GitHub API via `ureq` to pull live repository statistics without ever blocking your terminal's responsiveness.
+
+For end-users, Tropical Project Manager ships with **`tropical-projectmanager`**, a standalone binary.
+
+---
+
+## Using as a CLI Tool
+
+The CLI provides a straightforward interface to interact with Tropical Project Manager.
+
+The CLI can be installed globally or used locally in your project.
+
+```powershell
+cargo install --path .
+```
+
+**Why use `tropical-projectmanager`?**
+* **Instant Overview:** See exactly which projects have pending changes across your entire workspace at a glance.
+* **Deep Metrics:** Go beyond "dirty/clean" and see precise counts for added, modified, and deleted files.
+* **Stay Synced:** Instantly see if your local branches are ahead or behind their remote counterparts.
+* **Standardized Scaffolding:** Create new projects fully compliant with FMG standards in seconds.
+
+---
+
+## Installation
+
+### Via Cargo (Recommended)
+
+Since this is a Rust binary, installing via `cargo` is the most straightforward method.
+
+```powershell
+# Clone the repository (if you haven't already)
+git clone https://github.com/julesklord/tropical-projectmanager.git
+cd tropical-projectmanager
+
+# Install globally via cargo
+cargo install --path .
+
+# Run from anywhere!
+tropical-projectmanager
+```
+
+### GitHub API Rate Limits
+To prevent GitHub API rate limits (60 requests/hour), the application automatically detects if you have a `GITHUB_TOKEN` environment variable set and will use it to authenticate requests.
+
+```powershell
+$env:GITHUB_TOKEN="your_personal_access_token_here"
+tropical-projectmanager
+```
 
 ---
 
@@ -45,61 +94,6 @@ At its heart lies a powerful background thread engine powered by `std::sync::mps
 *   **🌐 Live GitHub Stats**: Automatically parses your `origin` remote. If it's a GitHub repo, it fetches Stars (★), Forks (🍴), and Open Issues (🐛) using the official GitHub API.
 *   **✨ FMG Standard Project Scaffolding**: Press `c` to instantly create a new project. The manager automatically copies the `jules_dev_standard/template` structure and runs `git init` for you.
 *   **🖱️ Full Mouse & Keyboard Support**: Navigate like a pro using `j/k`, arrow keys, or just use your mouse wheel and click directly on the project list.
-
----
-
-## Installation
-
-### From Source (Recommended)
-
-Since this is a local Rust binary, compiling from source ensures you have the latest performance optimizations for your architecture.
-
-```powershell
-# Clone the repository (if you haven't already)
-git clone https://github.com/yourusername/tropical-projectmanager.git
-cd tropical-projectmanager
-
-# Build and run
-cargo run
-```
-
-### GitHub API Rate Limits
-To prevent GitHub API rate limits (60 requests/hour), the application automatically detects if you have a `GITHUB_TOKEN` environment variable set and will use it to authenticate requests.
-
-```powershell
-$env:GITHUB_TOKEN="your_personal_access_token_here"
-cargo run
-```
-
----
-
-## Usage
-
-Once launched, the application searches the parent directory (`..` by default) for any subfolders containing a `.git` directory. 
-
-### Keyboard Controls
-*   `j` or `↓`: Next project
-*   `k` or `↑`: Previous project
-*   `r`: Refresh and re-scan directories
-*   `c`: Create a new project (Prompts for project name)
-*   `Enter`: Confirm project creation
-*   `Esc` or `q`: Quit or Cancel project creation
-
-### Mouse Controls
-*   **Scroll Wheel:** Navigate the project list up and down.
-*   **Left Click:** Directly select a project from the left panel to view its details.
-
----
-
-## Project Creation Guidelines
-
-Tropical Project Manager enforces the **FMG Repository Development Bible** standard. 
-
-When you press `c` and type a new project name (e.g., `my-new-app`), the application:
-1. Creates `../my-new-app`.
-2. Copies all the contents from `./jules_dev_standard/template` into the new folder (including standard `.gitignore`, `CHANGELOG.md`, `LICENSE`, `README.md`, etc.).
-3. Initializes a fresh `git` repository in the new folder.
-4. Rescans the workspace and highlights your new project.
 
 ---
 
@@ -130,3 +124,46 @@ graph TD
     UI -->|Press 'c'| FSExtra[fs_extra]
     FSExtra -->|Copies Template| FileSystem
 ```
+
+### Core Components
+
+- **`tropical-projectmanager`**: The core binary responsible for rendering the TUI, handling background threads, and coordinating file system interactions.
+
+---
+
+## Core Lifecycle
+
+The application follows a simple but robust lifecycle to ensure the terminal remains responsive while fetching heavy Git and network data.
+
+```mermaid
+stateDiagram-v2
+    [*] --> InitializeUI : App Launch
+    InitializeUI --> SpawnThread : Enter Main Loop
+    SpawnThread --> WaitState : Spin UI while thread works
+    
+    state BackgroundWorker {
+        ScanFiles --> ReadGitState
+        ReadGitState --> FetchGitHubStats
+    }
+    
+    WaitState --> RenderList : Channel receives data
+    RenderList --> [*] : User presses 'q'
+    
+    RenderList --> SpawnThread : User presses 'r' (Refresh)
+```
+
+---
+
+## Command Reference
+
+Once launched, the application searches the parent directory (`..` by default) for any subfolders containing a `.git` directory. You interact with it entirely via TUI controls.
+
+| Action | Control | Description |
+| :--- | :--- | :--- |
+| **Navigate Down** | `j` or `↓` or Mouse Scroll Down | Select the next project in the list. |
+| **Navigate Up** | `k` or `↑` or Mouse Scroll Up | Select the previous project in the list. |
+| **Refresh** | `r` | Re-scan the master directory for changes. |
+| **Create Project** | `c` | Open prompt to create a new FMG standard project. |
+| **Confirm Create** | `Enter` | Confirm project name and execute creation. |
+| **Cancel/Quit** | `Esc` or `q` | Quit the application or cancel project creation. |
+| **Select Project** | `Left Click` | Click on a project in the list to view its details. |
