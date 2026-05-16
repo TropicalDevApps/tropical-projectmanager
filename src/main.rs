@@ -1,3 +1,6 @@
+mod theme;
+use theme::{Brand, TREE_BRANCH, TREE_LAST, Theme};
+
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -8,16 +11,18 @@ use ratatui::{
     Frame, Terminal,
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout},
-    style::{Color, Modifier, Style},
+    style::Modifier,
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
 use std::{error::Error, io, path::PathBuf, sync::mpsc, thread, time::SystemTime};
 use walkdir::WalkDir;
 
+use serde::Deserialize;
+
 const MASTER_DIR: &str = "..";
 
-use serde::Deserialize;
+// ── GITHUB TYPES ─────────────────────────────────────────────
 
 #[derive(Clone, Default)]
 struct GitHubStats {
@@ -73,6 +78,8 @@ fn fetch_github_stats(remote_url: &str) -> Option<GitHubStats> {
     None
 }
 
+// ── PROJECT TYPES ─────────────────────────────────────────────
+
 #[derive(Clone)]
 enum FileStatusType {
     Modified,
@@ -101,6 +108,8 @@ enum InputMode {
     CreatingProject,
 }
 
+// ── APP STATE ─────────────────────────────────────────────────
+
 struct App {
     projects: Vec<Project>,
     list_state: ListState,
@@ -108,11 +117,12 @@ struct App {
     input_buffer: String,
     is_loading: bool,
     rx: Option<mpsc::Receiver<Vec<Project>>>,
-    spinner_tick: u8,
+    tick: u8,
+    theme: Theme,
 }
 
 impl App {
-    fn new() -> App {
+    fn new(brand: Brand) -> App {
         let mut app = App {
             projects: Vec::new(),
             list_state: ListState::default(),
@@ -120,7 +130,8 @@ impl App {
             input_buffer: String::new(),
             is_loading: false,
             rx: None,
-            spinner_tick: 0,
+            tick: 0,
+            theme: Theme::from_brand(brand),
         };
         app.scan_projects();
         app
@@ -163,15 +174,12 @@ impl App {
                                 if let Some(branch_name) = head.shorthand() {
                                     current_branch = branch_name.to_string();
                                 }
-
                                 if let Ok(commit) = head.peel_to_commit() {
                                     last_commit_time = commit.time().seconds();
                                     if let Some(msg) = commit.summary() {
                                         last_commit_msg = Some(msg.to_string());
                                     }
                                 }
-
-                                // Try to calculate ahead/behind
                                 if head.is_branch() {
                                     if let Some(branch_name) = head.shorthand() {
                                         if let Ok(branch) =
@@ -198,7 +206,6 @@ impl App {
                             let mut modified = 0;
                             let mut deleted = 0;
                             let mut changed_files = Vec::new();
-
                             let mut status_opts = StatusOptions::new();
                             status_opts.include_untracked(true);
 
@@ -311,7 +318,6 @@ impl App {
         self.list_state.select(Some(i));
     }
 
-    // Allows selecting via mouse click on the list
     fn select_index(&mut self, index: usize) {
         if index < self.projects.len() {
             self.list_state.select(Some(index));
@@ -319,34 +325,45 @@ impl App {
     }
 }
 
+// ── UTILS ─────────────────────────────────────────────────────
+
 fn format_time_ago(timestamp: i64) -> String {
     if timestamp == 0 {
-        return "Unknown".to_string();
+        return "unknown".to_string();
     }
     let now = SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64;
-
     let diff = now - timestamp;
-
     if diff < 60 {
         "just now".to_string()
     } else if diff < 3600 {
-        format!("{} minutes ago", diff / 60)
+        format!("{} min ago", diff / 60)
     } else if diff < 86400 {
-        format!("{} hours ago", diff / 3600)
+        format!("{} hr ago", diff / 3600)
     } else if diff < 2592000 {
         format!("{} days ago", diff / 86400)
     } else if diff < 31536000 {
-        format!("{} months ago", diff / 2592000)
+        format!("{} mo ago", diff / 2592000)
     } else {
-        format!("{} years ago", diff / 31536000)
+        format!("{} yr ago", diff / 31536000)
     }
 }
 
+// ── ENTRY POINT ───────────────────────────────────────────────
+
 fn main() -> Result<(), Box<dyn Error>> {
-    let mut app = App::new();
+    let brand = match std::env::var("TROPICAL_BRAND").as_deref() {
+        Ok("mango") => Brand::Mango,
+        Ok("ocean") => Brand::Ocean,
+        Ok("pitahaya") => Brand::Pitahaya,
+        Ok("papaya") => Brand::Papaya,
+        Ok("balandra") => Brand::Balandra,
+        _ => Brand::Tropical,
+    };
+
+    let mut app = App::new(brand);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -367,9 +384,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     if let Err(err) = res {
         eprintln!("Application Error: {:?}", err);
     }
-
     Ok(())
 }
+
+// ── EVENT LOOP ────────────────────────────────────────────────
 
 fn run_app<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> Result<(), Box<dyn Error>>
 where
@@ -381,7 +399,6 @@ where
                 app.projects = projects;
                 app.is_loading = false;
                 app.rx = None;
-
                 if app.list_state.selected().is_none() && !app.projects.is_empty() {
                     app.list_state.select(Some(0));
                 }
@@ -399,9 +416,7 @@ where
                                 KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
                                 KeyCode::Down | KeyCode::Char('j') => app.next(),
                                 KeyCode::Up | KeyCode::Char('k') => app.previous(),
-                                KeyCode::Char('r') => {
-                                    app.scan_projects();
-                                }
+                                KeyCode::Char('r') => app.scan_projects(),
                                 KeyCode::Char('c') => {
                                     app.input_mode = InputMode::CreatingProject;
                                     app.input_buffer.clear();
@@ -410,92 +425,122 @@ where
                             },
                             InputMode::CreatingProject => match key.code {
                                 KeyCode::Enter => {
-                                    let new_project_name = app.input_buffer.trim().to_string();
-                                    if !new_project_name.is_empty() {
-                                        let new_project_path =
-                                            PathBuf::from(MASTER_DIR).join(&new_project_name);
-                                        let template_dir =
+                                    let name = app.input_buffer.trim().to_string();
+                                    if !name.is_empty() {
+                                        let new_path = PathBuf::from(MASTER_DIR).join(&name);
+                                        let template =
                                             PathBuf::from("./jules_dev_standard/template");
-
-                                        if !new_project_path.exists() && template_dir.exists() {
-                                            if std::fs::create_dir_all(&new_project_path).is_ok() {
-                                                let mut options = fs_extra::dir::CopyOptions::new();
-                                                options.content_only = true;
+                                        if !new_path.exists() && template.exists() {
+                                            if std::fs::create_dir_all(&new_path).is_ok() {
+                                                let mut opts = fs_extra::dir::CopyOptions::new();
+                                                opts.content_only = true;
                                                 let _ = fs_extra::dir::copy(
-                                                    &template_dir,
-                                                    &new_project_path,
-                                                    &options,
+                                                    &template, &new_path, &opts,
                                                 );
-                                                let _ = Repository::init(&new_project_path);
+                                                let _ = Repository::init(&new_path);
                                             }
                                         }
                                         app.scan_projects();
                                     }
                                     app.input_mode = InputMode::Normal;
                                 }
-                                KeyCode::Char(c) => {
-                                    app.input_buffer.push(c);
-                                }
+                                KeyCode::Char(c) => app.input_buffer.push(c),
                                 KeyCode::Backspace => {
                                     app.input_buffer.pop();
                                 }
-                                KeyCode::Esc => {
-                                    app.input_mode = InputMode::Normal;
-                                }
+                                KeyCode::Esc => app.input_mode = InputMode::Normal,
                                 _ => {}
                             },
                         }
                     }
                 }
-                Event::Mouse(mouse_event) => {
-                    match mouse_event.kind {
-                        event::MouseEventKind::ScrollDown => {
-                            if let InputMode::Normal = app.input_mode {
-                                app.next();
-                            }
+                Event::Mouse(m) => match m.kind {
+                    event::MouseEventKind::ScrollDown => {
+                        if let InputMode::Normal = app.input_mode {
+                            app.next();
                         }
-                        event::MouseEventKind::ScrollUp => {
-                            if let InputMode::Normal = app.input_mode {
-                                app.previous();
-                            }
-                        }
-                        event::MouseEventKind::Down(event::MouseButton::Left) => {
-                            if let InputMode::Normal = app.input_mode {
-                                let offset = app.list_state.offset();
-                                let y_pos = mouse_event.row as usize;
-                                // Ignore clicks on the border
-                                if y_pos > 0 {
-                                    let clicked_index = offset + (y_pos - 1);
-                                    app.select_index(clicked_index);
-                                }
-                            }
-                        }
-                        _ => {}
                     }
-                }
+                    event::MouseEventKind::ScrollUp => {
+                        if let InputMode::Normal = app.input_mode {
+                            app.previous();
+                        }
+                    }
+                    event::MouseEventKind::Down(event::MouseButton::Left) => {
+                        if let InputMode::Normal = app.input_mode {
+                            let y = m.row as usize;
+                            if y > 1 {
+                                // skip status bar (row 0) + border (row 1)
+                                app.select_index(app.list_state.offset() + (y - 2));
+                            }
+                        }
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         } else {
-            app.spinner_tick = app.spinner_tick.wrapping_add(1);
+            app.tick = app.tick.wrapping_add(1);
         }
     }
 }
 
-fn ui(f: &mut Frame, app: &mut App) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)].as_ref())
-        .split(f.area());
+// ── UI RENDER ─────────────────────────────────────────────────
 
+fn ui(f: &mut Frame, app: &mut App) {
+    let t = &app.theme;
+    let area = f.area();
+
+    // ── LAYOUT: status_bar(1) | main ──────────────────────────
+    // Archetype A: Command Station (§6 TUI spec)
+    let root = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+
+    // ── STATUS BAR ────────────────────────────────────────────
+    // TUI_STATUS_BAR dense — [ LABEL: VALUE ] bracket notation
+    // Left: app identity + mode + repo count
+    // Right: key hint shortcuts
+    let repo_count = format!("{} REPOS", app.projects.len());
+    let status_line = if app.is_loading {
+        let spinner = t.spinner_span(app.tick);
+        let mut spans = t.status_seg("MODE", "SCANNING");
+        spans.insert(2, spinner);
+        Line::from(spans)
+    } else {
+        t.status_bar_line(
+            vec![("TROPICAL_PM", "v0.1"), ("REPOS", &repo_count)],
+            vec![("R", "REFRESH"), ("C", "CREATE"), ("Q", "QUIT")],
+        )
+    };
+
+    f.render_widget(Paragraph::new(status_line), root[0]);
+
+    // ── MAIN AREA: list(35%) | detail(65%) ────────────────────
+    let main = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+        .split(root[1]);
+
+    // ── PROJECT LIST — Nav Orbit style ────────────────────────
+    // Active item: ❯ NAME (primary, bold)
+    // Inactive:    ○/● + NAME (tertiary, dimmed)
     let items: Vec<ListItem> = app
         .projects
         .iter()
-        .map(|p| {
-            let prefix = if p.is_dirty { "✗" } else { "✓" };
-            let color = if p.is_dirty { Color::Red } else { Color::Green };
+        .enumerate()
+        .map(|(i, p)| {
+            let active = app.list_state.selected() == Some(i);
 
-            // Add an upstream sync indicator if there's any diff with remote
-            let sync_symbol = if p.ahead > 0 && p.behind > 0 {
+            let dot = if p.is_dirty { t.dot_warn() } else { t.dot_on() };
+
+            let (prefix, name_style) = if active {
+                (Span::styled("❯ ", t.accent()), t.accent())
+            } else {
+                (Span::styled("  ", t.text_disabled()), t.text_dim())
+            };
+
+            let sync_sym = if p.ahead > 0 && p.behind > 0 {
                 " ⇅"
             } else if p.ahead > 0 {
                 " ↑"
@@ -506,281 +551,228 @@ fn ui(f: &mut Frame, app: &mut App) {
             };
 
             let line = Line::from(vec![
-                Span::styled(format!("{} ", prefix), Style::default().fg(color)),
-                Span::raw(&p.name),
-                Span::styled(sync_symbol, Style::default().fg(Color::LightBlue)),
+                prefix,
+                dot,
+                Span::raw(" "),
+                Span::styled(&p.name, name_style),
+                Span::styled(sync_sym, t.accent_light()),
             ]);
             ListItem::new(line)
         })
         .collect();
 
-    let title = if app.is_loading {
-        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let frame = spinner_frames[(app.spinner_tick as usize / 2) % spinner_frames.len()];
-        format!(" Projects {} Scanning... ", frame)
-    } else {
-        " Projects (q:quit, r:refresh, c:create) ".to_string()
-    };
-
-    let projects_block = Block::default()
-        .title(Span::styled(
-            title,
-            Style::default().fg(if app.is_loading {
-                Color::Yellow
-            } else {
-                Color::White
-            }),
-        ))
-        .borders(Borders::ALL);
+    let list_block = Block::default()
+        .title(Span::styled(" PROJECTS ", t.block_title()))
+        .borders(Borders::ALL)
+        .border_style(t.border());
 
     let list = List::new(items)
-        .block(projects_block)
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol(">> ");
+        .block(list_block)
+        .highlight_style(t.row_selected());
 
-    f.render_stateful_widget(list, chunks[0], &mut app.list_state);
+    f.render_stateful_widget(list, main[0], &mut app.list_state);
 
-    let right_chunk = chunks[1];
+    // ── DETAIL PANEL ──────────────────────────────────────────
+    let right = main[1];
 
+    // Creation mode — prompt with animated cursor
     if let InputMode::CreatingProject = app.input_mode {
-        let input_text = format!("Enter new project name: {}", app.input_buffer);
-        let input_paragraph = Paragraph::new(input_text)
-            .block(
-                Block::default()
-                    .title(" Create New Project (Enter:Confirm, Esc:Cancel) ")
-                    .borders(Borders::ALL),
-            )
-            .style(Style::default().fg(Color::Yellow));
-        f.render_widget(input_paragraph, right_chunk);
-    } else if let Some(selected_index) = app.list_state.selected() {
-        if let Some(project) = app.projects.get(selected_index) {
-            // Branch and Sync Status Line
-            let mut branch_spans = vec![
-                Span::styled("Branch:  ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(
-                    &project.current_branch,
-                    Style::default()
-                        .fg(Color::Magenta)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ];
+        let cursor = t.cursor_span(app.tick);
+        let mut prompt_spans = vec![
+            Span::styled("  NEW PROJECT  ❯  ", t.accent()),
+            Span::styled(&app.input_buffer, t.text()),
+        ];
+        prompt_spans.push(cursor);
 
-            if project.ahead > 0 || project.behind > 0 {
-                branch_spans.push(Span::raw(" ("));
-                if project.ahead > 0 {
-                    branch_spans.push(Span::styled(
-                        format!("Ahead: {}", project.ahead),
-                        Style::default().fg(Color::Green),
-                    ));
-                }
-                if project.ahead > 0 && project.behind > 0 {
-                    branch_spans.push(Span::raw(", "));
-                }
-                if project.behind > 0 {
-                    branch_spans.push(Span::styled(
-                        format!("Behind: {}", project.behind),
-                        Style::default().fg(Color::Red),
-                    ));
-                }
-                branch_spans.push(Span::raw(")"));
-            } else {
-                branch_spans.push(Span::styled(
-                    " (Synced with remote)",
-                    Style::default().fg(Color::DarkGray),
-                ));
-            }
+        let input_para = Paragraph::new(Line::from(prompt_spans)).block(
+            Block::default()
+                .title(Span::styled(
+                    " [ ENTER ] CONFIRM  [ ESC ] CANCEL ",
+                    t.input_prompt(),
+                ))
+                .borders(Borders::ALL)
+                .border_style(t.border_active()),
+        );
+        f.render_widget(input_para, right);
+        return;
+    }
 
-            // Local Dirty Status Breakdown
-            let mut status_spans = vec![
-                Span::styled("Status:  ", Style::default().add_modifier(Modifier::BOLD)),
-                Span::styled(
-                    if project.is_dirty {
-                        "Changes Pending"
-                    } else {
-                        "Clean"
-                    },
-                    Style::default().fg(if project.is_dirty {
-                        Color::LightYellow
-                    } else {
-                        Color::LightGreen
-                    }),
-                ),
-            ];
+    // No project selected
+    let Some(idx) = app.list_state.selected() else {
+        let msg = if app.is_loading {
+            "  Scanning repositories…"
+        } else if app.projects.is_empty() {
+            "  No projects found. Press [R] to refresh."
+        } else {
+            "  Select a project."
+        };
+        let placeholder = Paragraph::new(Span::styled(msg, t.text_disabled())).block(
+            Block::default()
+                .title(Span::styled(" DETAILS ", t.block_title()))
+                .borders(Borders::ALL)
+                .border_style(t.border()),
+        );
+        f.render_widget(placeholder, right);
+        return;
+    };
 
-            if project.is_dirty {
-                status_spans.push(Span::raw(" ["));
-                let mut dirty_parts = Vec::new();
-                if project.modified > 0 {
-                    dirty_parts.push(Span::styled(
-                        format!("~{}", project.modified),
-                        Style::default().fg(Color::Yellow),
-                    ));
-                }
-                if project.untracked > 0 {
-                    dirty_parts.push(Span::styled(
-                        format!("+{}", project.untracked),
-                        Style::default().fg(Color::Green),
-                    ));
-                }
-                if project.deleted > 0 {
-                    dirty_parts.push(Span::styled(
-                        format!("-{}", project.deleted),
-                        Style::default().fg(Color::Red),
-                    ));
-                }
+    let Some(p) = app.projects.get(idx) else {
+        return;
+    };
 
-                // Interleave parts with commas
-                for (i, part) in dirty_parts.into_iter().enumerate() {
-                    if i > 0 {
-                        status_spans.push(Span::raw(", "));
-                    }
-                    status_spans.push(part);
-                }
-                status_spans.push(Span::raw("]"));
-            }
+    // ── DETAIL CONTENT ────────────────────────────────────────
+    let mut lines: Vec<Line> = Vec::new();
 
-            // Time Since Last Commit
-            let time_ago = format_time_ago(project.last_commit_time);
+    // Panel header — [ PROJECT_NAME ] strip
+    let project_title = p.name.to_uppercase();
+    lines.push(t.panel_header_line(&project_title));
+    lines.push(Line::from(""));
 
-            let mut detail_text = vec![
-                Line::from(vec![
-                    Span::styled("Project: ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(
-                        &project.name,
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]),
-                Line::from(vec![
-                    Span::styled("Path:    ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(project.path.to_string_lossy().to_string()),
-                ]),
-                Line::from(""),
-                Line::from(branch_spans),
-                Line::from(status_spans),
-                Line::from(""),
-                Line::from(vec![
-                    Span::styled(
-                        "Last Update: ",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(time_ago),
-                ]),
-                Line::from(Span::styled(
-                    project
-                        .last_commit_msg
-                        .as_deref()
-                        .unwrap_or("No commits found")
-                        .trim(),
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::ITALIC),
-                )),
-            ];
+    // Path — tree style
+    lines.push(Line::from(vec![
+        Span::styled(TREE_BRANCH, t.text_muted()),
+        Span::styled("PATH    ", t.label()),
+        Span::styled(p.path.to_string_lossy().to_string(), t.text_muted()),
+    ]));
 
-            if let Some(gh) = &project.github_stats {
-                detail_text.push(Line::from(""));
-                detail_text.push(Line::from(vec![
-                    Span::styled("GitHub:  ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(
-                        format!(
-                            "★ {}   🍴 {}   🐛 {} issues",
-                            gh.stars, gh.forks, gh.open_issues
-                        ),
-                        Style::default().fg(Color::Yellow),
-                    ),
-                ]));
-                detail_text.push(Line::from(vec![
-                    Span::styled("URL:     ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::styled(
-                        &gh.url,
-                        Style::default()
-                            .fg(Color::Blue)
-                            .add_modifier(Modifier::UNDERLINED),
-                    ),
-                ]));
-            }
-
-            if project.is_dirty {
-                detail_text.push(Line::from(""));
-                detail_text.push(Line::from(Span::styled(
-                    "Changed Files:",
-                    Style::default().add_modifier(Modifier::BOLD),
-                )));
-                for (path, status) in &project.changed_files {
-                    let (symbol, color) = match status {
-                        FileStatusType::Modified => ("~", Color::Yellow),
-                        FileStatusType::Untracked => ("+", Color::Green),
-                        FileStatusType::Deleted => ("-", Color::Red),
-                    };
-                    detail_text.push(Line::from(vec![
-                        Span::raw("  "),
-                        Span::styled(
-                            symbol,
-                            Style::default().fg(color).add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(" "),
-                        Span::styled(path, Style::default().fg(Color::White)),
-                    ]));
-                }
-
-                let total_changes = project.modified + project.untracked + project.deleted;
-                if total_changes > project.changed_files.len() {
-                    detail_text.push(Line::from(vec![
-                        Span::raw("  "),
-                        Span::styled(
-                            format!(
-                                "... and {} more",
-                                total_changes - project.changed_files.len()
-                            ),
-                            Style::default()
-                                .fg(Color::DarkGray)
-                                .add_modifier(Modifier::ITALIC),
-                        ),
-                    ]));
-                }
-            } else {
-                detail_text.push(Line::from(""));
-                detail_text.push(Line::from(Span::styled(
-                    "✨ Workspace is clean",
-                    Style::default()
-                        .fg(Color::LightGreen)
-                        .add_modifier(Modifier::BOLD),
-                )));
-            }
-
-            let detail_paragraph = Paragraph::new(detail_text)
-                .block(
-                    Block::default()
-                        .title(" Project Details ")
-                        .borders(Borders::ALL),
-                )
-                .wrap(Wrap { trim: true });
-
-            f.render_widget(detail_paragraph, right_chunk);
+    // Branch + sync
+    let mut branch_spans = vec![
+        Span::styled(TREE_BRANCH, t.text_muted()),
+        Span::styled("BRANCH  ", t.label()),
+        Span::styled(&p.current_branch, t.branch_name()),
+    ];
+    if p.ahead > 0 || p.behind > 0 {
+        branch_spans.push(Span::styled("  ", t.text_muted()));
+        if p.ahead > 0 {
+            branch_spans.push(Span::styled(
+                format!("↑{} ", p.ahead),
+                t.git_ahead().add_modifier(Modifier::BOLD),
+            ));
+        }
+        if p.behind > 0 {
+            branch_spans.push(Span::styled(
+                format!("↓{} ", p.behind),
+                t.git_behind().add_modifier(Modifier::BOLD),
+            ));
         }
     } else {
-        let empty_msg = if app.is_loading {
-            "Scanning master directory for projects...".to_string()
-        } else if app.projects.is_empty() {
-            format!("No projects found in {}. Try 'r' to refresh.", MASTER_DIR)
-        } else {
-            "Select a project to see details.".to_string()
-        };
-
-        let empty_paragraph = Paragraph::new(empty_msg)
-            .block(
-                Block::default()
-                    .title(" Project Details ")
-                    .borders(Borders::ALL),
-            )
-            .style(Style::default().fg(Color::DarkGray));
-
-        f.render_widget(empty_paragraph, right_chunk);
+        branch_spans.push(Span::styled("  synced", t.text_disabled()));
     }
+    lines.push(Line::from(branch_spans));
+
+    // Status
+    let mut status_spans = vec![
+        Span::styled(TREE_LAST, t.text_muted()),
+        Span::styled("STATUS  ", t.label()),
+        if p.is_dirty {
+            Span::styled("DIRTY", t.git_dirty().add_modifier(Modifier::BOLD))
+        } else {
+            Span::styled("CLEAN", t.git_clean().add_modifier(Modifier::BOLD))
+        },
+    ];
+    if p.is_dirty {
+        status_spans.push(Span::styled("  [", t.text_muted()));
+        if p.modified > 0 {
+            status_spans.push(Span::styled(format!("~{} ", p.modified), t.git_modified()));
+        }
+        if p.untracked > 0 {
+            status_spans.push(Span::styled(
+                format!("+{} ", p.untracked),
+                t.git_untracked(),
+            ));
+        }
+        if p.deleted > 0 {
+            status_spans.push(Span::styled(format!("-{} ", p.deleted), t.git_deleted()));
+        }
+        status_spans.push(Span::styled("]", t.text_muted()));
+    }
+    lines.push(Line::from(status_spans));
+
+    lines.push(Line::from(""));
+
+    // Last commit
+    lines.push(t.panel_header_line("LAST COMMIT"));
+    lines.push(Line::from(vec![
+        Span::styled("  ", t.text_muted()),
+        Span::styled(format_time_ago(p.last_commit_time), t.text_dim()),
+    ]));
+    lines.push(Line::from(Span::styled(
+        format!(
+            "  {}",
+            p.last_commit_msg.as_deref().unwrap_or("no commits").trim()
+        ),
+        t.commit_msg(),
+    )));
+
+    // GitHub stats
+    if let Some(gh) = &p.github_stats {
+        lines.push(Line::from(""));
+        lines.push(t.panel_header_line("GITHUB"));
+        lines.push(Line::from(vec![
+            Span::styled("  ★ ", t.github_stats()),
+            Span::styled(
+                gh.stars.to_string(),
+                t.github_stats().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("  ⑂ ", t.text_muted()),
+            Span::styled(gh.forks.to_string(), t.text_dim()),
+            Span::styled("  ⚐ ", t.text_muted()),
+            Span::styled(gh.open_issues.to_string(), t.text_dim()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  ", t.text_muted()),
+            Span::styled(&gh.url, t.link()),
+        ]));
+    }
+
+    // Changed files — tree view
+    if p.is_dirty {
+        lines.push(Line::from(""));
+        lines.push(t.panel_header_line("CHANGES"));
+
+        let total = p.modified + p.untracked + p.deleted;
+        let shown = p.changed_files.len();
+
+        for (i, (file_path, status)) in p.changed_files.iter().enumerate() {
+            let (sym, style) = match status {
+                FileStatusType::Modified => ("~", t.git_modified()),
+                FileStatusType::Untracked => ("+", t.git_untracked()),
+                FileStatusType::Deleted => ("-", t.git_deleted()),
+            };
+            let is_last = i == shown - 1 && total <= shown;
+            let prefix = if is_last { TREE_LAST } else { TREE_BRANCH };
+            lines.push(Line::from(vec![
+                Span::styled(prefix, t.text_muted()),
+                Span::styled(format!("{} ", sym), style.add_modifier(Modifier::BOLD)),
+                Span::styled(file_path, t.text_dim()),
+            ]));
+        }
+
+        if total > shown {
+            lines.push(Line::from(vec![
+                Span::styled(TREE_LAST, t.text_muted()),
+                Span::styled(format!("… {} more", total - shown), t.text_disabled()),
+            ]));
+        }
+    } else {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("  ", t.text_muted()),
+            Span::styled(
+                "✓ workspace clean",
+                t.git_clean().add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    }
+
+    let detail = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(Span::styled(" DETAILS ", t.block_title()))
+                .borders(Borders::ALL)
+                .border_style(t.border_active()),
+        )
+        .wrap(Wrap { trim: true });
+
+    f.render_widget(detail, right);
 }

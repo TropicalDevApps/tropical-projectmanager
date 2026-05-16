@@ -1,0 +1,80 @@
+{
+  "name": "TropicalUI Design Tokens",
+  "version": "1.0.0",
+  "author": "Jules Martins / Tropical Media Group",
+  "source": "TropicalDev-Design",
+  "tokens": {
+    "surfaces": {
+      "industrial": {
+        "surface-0": "#0a0c10",
+        "surface-1": "#0f1218",
+        "surface-2": "#14171f",
+        "surface-3": "#1a1e26",
+        "surface-4": "#21252e",
+        "surface-5": "#292e38",
+        "surface-6": "#323845"
+      }
+    },
+    "text": {
+      "primary": "rgba(255,255,255,0.92)",
+      "secondary": "rgba(255,255,255,0.65)",
+      "tertiary": "rgba(255,255,255,0.40)",
+      "disabled": "rgba(255,255,255,0.20)"
+    },
+    "semantic": {
+      "success": "#34a853",
+      "warning": "#fbbf24",
+      "danger": "#f28b82",
+      "info": "#60a5fa"
+    },
+    "brands": {
+      "tropical": {
+        "primary": "#4285f4",
+        "secondary": "#c5a9f5",
+        "description": "Default Master Theme"
+      },
+      "mango": {
+        "primary": "#FFB347",
+        "secondary": "#F0E68C",
+        "description": "Flat Pastel Orange"
+      },
+      "ocean": {
+        "primary": "#4FA4D8",
+        "secondary": "#80CBC4",
+        "description": "Flat Pastel Blue"
+      },
+      "pitahaya": {
+        "primary": "#FF2400",
+        "secondary": "#2E8B57",
+        "description": "BCS Inspired Red"
+      },
+      "papaya": {
+        "primary": "#FF8A65",
+        "secondary": "#FFD54F",
+        "description": "Flat Pastel Coral"
+      },
+      "balandra": {
+        "primary": "#a855f7",
+        "secondary": "#e11d48",
+        "description": "Deep Purple & Crimson"
+      }
+    }
+  },
+  "tui_spec": {
+    "symbols": {
+      "nav_active": "❯",
+      "tree_branch": "┣━",
+      "tree_last": "┗━",
+      "tree_pipe": "┃",
+      "progress_full": "█",
+      "progress_empty": "░",
+      "dot": "●"
+    },
+    "durations_ms": {
+      "instant": 60,
+      "fast": 110,
+      "base": 190,
+      "slow": 320
+    }
+  }
+}
